@@ -1,0 +1,137 @@
+---
+title: 'Assignment 1: JSON Flattening and Analysis'
+author: "Venkata Lakshmi Parimala Pasupuleti"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+## In this assignment, we process a nested JSON file containing DMCA notices. The workflow involves flattening the data, extracting domain and IP information, parallelizing IP resolution, and generating summaries to understand patterns in the data.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(jsonlite)
+library(dplyr)
+library(urltools)
+library(parallel)
+```
+
+## Step 1: Flatten the JSON
+
+```{r flatten}
+json_path <- "D:/projects/GTAGRA project/Assignment-1/response.json"
+json_data <- fromJSON(json_path, simplifyVector = FALSE)
+
+notices <- json_data$notices
+records <- list()
+
+for (notice in notices) {
+  works <- notice$works
+  if (!is.null(works) && length(works) > 0) {
+    for (work in works) {
+      desc <- if (!is.null(work$description)) work$description else NA
+      urls <- work$infringing_urls
+      if (!is.null(urls) && length(urls) > 0) {
+        for (u in urls) {
+          if (!is.null(u$url)) {
+            row <- list(
+              id = notice$id,
+              type = notice$type,
+              title = notice$title,
+              date_sent = notice$date_sent,
+              date_received = notice$date_received,
+              sender_name = notice$sender_name,
+              principal_name = notice$principal_name,
+              recipient_name = notice$recipient_name,
+              work_description = desc,
+              infringing_url = u$url
+            )
+            records <- append(records, list(row))
+          }
+        }
+      }
+    }
+  }
+}
+
+df <- bind_rows(records)
+df <- df %>% mutate_all(as.character)
+write.csv(df, "D:/projects/GTAGRA project/Assignment-1/R/flattened_step1_R.csv", row.names = FALSE, fileEncoding = "UTF-8")
+
+head(df)
+```
+
+## Step 2 & 3: Create domain and IP columns using 4 CPUs
+
+```{r domain-ip}
+library(urltools)
+library(parallel)
+library(dplyr)
+
+# Extract domain
+df$domain <- domain(df$infringing_url)
+
+# Function to resolve IP address
+get_ip <- function(domain) {
+  tryCatch({
+    ip <- system(paste("nslookup", domain), intern = TRUE)
+    addr <- grep("Address", ip, value = TRUE)
+    ip_value <- if (length(addr) > 0) {
+      gsub("Address: ", "", tail(addr, 1))
+    } else {
+      NA_character_
+    }
+    ip_value
+  }, error = function(e) NA_character_)
+}
+
+# Get unique domains
+unique_domains <- unique(df$domain)
+
+# Parallel IP resolution
+cl <- makeCluster(4)
+clusterExport(cl, varlist = c("get_ip"))
+ips <- parSapply(cl, unique_domains, get_ip)
+stopCluster(cl)
+
+# Create IP mapping
+df_ip <- data.frame(domain = unique_domains, ip_address = ips, stringsAsFactors = FALSE)
+df <- left_join(df, df_ip, by = "domain")
+
+write.csv(df, "D:/projects/GTAGRA project/Assignment-1/R/flattened_step2-3_R.csv", row.names = FALSE, fileEncoding = "UTF-8")
+head(df[, c("infringing_url", "domain", "ip_address")])
+```
+
+## Step 4: Summarizations
+## In this final step, we generate three summaries to better understand the dataset:
+- **Summary 1**: Top 10 domains by number of infringing URLs.
+- **Summary 2**: Number of unique notices sent by each sender.
+- **Summary 3**: Number of infringing URLs per work description.
+
+
+```{r summaries}
+summary1 <- df %>%
+  count(domain, sort = TRUE) %>%
+  head(10)
+write.csv(summary1, "D:/projects/GTAGRA project/Assignment-1/R/summary_urls_per_domain_R.csv", row.names = FALSE, fileEncoding = "UTF-8")
+summary1
+
+summary2 <- df %>%
+  group_by(sender_name) %>%
+  summarise(notice_count = n_distinct(id)) %>%
+  arrange(desc(notice_count))
+write.csv(summary2, "D:/projects/GTAGRA project/Assignment-1/R/summary_notices_per_sender_R.csv", row.names = FALSE, fileEncoding = "UTF-8")
+head(summary2, 10)
+
+summary3 <- df %>%
+  group_by(work_description) %>%
+  summarise(url_count = n()) %>%
+  arrange(desc(url_count))
+write.csv(summary3, "D:/projects/GTAGRA project/Assignment-1/R/summary_urls_per_work_R.csv", row.names = FALSE, fileEncoding = "UTF-8")
+head(summary3, 10)
+```
+
+## Done!
+
