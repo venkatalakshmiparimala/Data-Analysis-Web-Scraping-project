@@ -1,4 +1,4 @@
-📘 Data Analysis & Web Scraping Assignments
+📘 Data Analysis & Web Scraping 
 This repository contains two assignments that demonstrate skills in data engineering, data extraction, and web scraping using Python and R. Both projects reflect a practical application of real-world data processing and dynamic web content extraction.
 
 📌 Assignment 1: JSON Flattening and Data Enrichment (DMCA Notices)
